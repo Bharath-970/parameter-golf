@@ -662,10 +662,10 @@ class MLP(nn.Module):
             # Int4 QAT: simulate post-training int4 quantization during training
             fc_w = fake_quant_ste(self.fc.weight, clip_range=7).to(x.dtype)
             proj_w = fake_quant_ste(self.proj.weight, clip_range=7).to(x.dtype)
-            h = torch.relu(F.linear(x, fc_w))
+            h = F.leaky_relu(F.linear(x, fc_w), negative_slope=0.5)
             return F.linear(h.square(), proj_w)
         else:
-            h = torch.relu(self.fc(x))
+            h = F.leaky_relu(self.fc(x), negative_slope=0.5)
             return self.proj(h.square())
 
 
