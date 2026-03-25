@@ -50,7 +50,7 @@ def train():
     # Run training
     result = subprocess.run([
         "torchrun", "--standalone", "--nproc_per_node=1",
-        "records/track_10min_16mb/2026-03-25_14L_XSA6_GPTQ_EMA_PartialRoPE_TTT/train_gpt.py"
+        "records/track_10min_16mb/2026-03-25_16L_XSAall_GPTQ_EMA_PartialRoPE_TTT/train_gpt.py"
     ], capture_output=False, env={**os.environ, "HOME": "/root"})
 
     return result.returncode
