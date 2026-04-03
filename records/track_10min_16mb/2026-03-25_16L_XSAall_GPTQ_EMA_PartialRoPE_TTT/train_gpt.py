@@ -58,7 +58,7 @@ class Hyperparameters:
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 12))
+    num_layers = int(os.environ.get("NUM_LAYERS", 11))
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
@@ -100,7 +100,7 @@ class Hyperparameters:
     xsa_num_layers = int(os.environ.get("XSA_NUM_LAYERS", "-1"))  # -1 = XSA-all: all layers share K,V from layer 0; else last N layers share K,V with layer[i-N]
 
     # Test-time training (cosine full-model fine-tune on val before eval)
-    ttt_epochs = int(os.environ.get("TTT_EPOCHS", 30))
+    ttt_epochs = int(os.environ.get("TTT_EPOCHS", 10))
     ttt_lr = float(os.environ.get("TTT_LR", 0.0005))
 
 # -----------------------------
@@ -607,7 +607,7 @@ def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, rope_base: float, qk_gain_init: float, rope_partial_frac: float = 0.25, kv_source: "CausalSelfAttention | None" = None):
+    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, rope_base: float, qk_gain_init: float, rope_partial_frac: float = 0.25, use_xsa: bool = False):
         super().__init__()
         if dim % num_heads != 0:
             raise ValueError("model_dim must be divisible by num_heads")
@@ -621,18 +621,24 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("rope_dim must be even")
         kv_dim = self.num_kv_heads * self.head_dim
         self.c_q = CastedLinear(dim, dim, bias=False)
-        if kv_source is None:
-            self.c_k = CastedLinear(dim, kv_dim, bias=False)
-            self.c_v = CastedLinear(dim, kv_dim, bias=False)
-        else:
-            # XSA: share K,V projections with source block — store without nn.Module registration
-            # so parameters aren't double-counted; source block owns them
-            object.__setattr__(self, 'c_k', kv_source.c_k)
-            object.__setattr__(self, 'c_v', kv_source.c_v)
+        self.c_k = CastedLinear(dim, kv_dim, bias=False)
+        self.c_v = CastedLinear(dim, kv_dim, bias=False)
         self.proj = CastedLinear(dim, dim, bias=False)
         self.proj._zero_init = True
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(rope_dim, base=rope_base)
+        self.use_xsa = use_xsa
+
+    @staticmethod
+    def _xsa(y: Tensor, v: Tensor) -> Tensor:
+        """Cross-Self-Attention value subtraction (GQA-aware)."""
+        B, T, H, D = y.shape
+        Hkv = v.size(-2)
+        group = H // Hkv
+        y_g = y.reshape(B, T, Hkv, group, D)
+        vn = F.normalize(v, dim=-1).unsqueeze(-2)
+        proj = (y_g * vn).sum(dim=-1, keepdim=True) * vn
+        return (y_g - proj).reshape(B, T, H, D)
 
     def forward(self, x: Tensor) -> Tensor:
         bsz, seqlen, dim = x.shape
@@ -649,7 +655,10 @@ class CausalSelfAttention(nn.Module):
             q, k, v, attn_mask=None, is_causal=True,
             enable_gqa=(self.num_kv_heads != self.num_heads),
         )
-        y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
+        y = y.transpose(1, 2)  # [B, T, H, D]
+        if self.use_xsa:
+            y = self._xsa(y, v.transpose(1, 2))
+        y = y.contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
 
 
@@ -740,11 +749,11 @@ class TrigramHashEmbedding(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, mlp_mult: float, rope_base: float, qk_gain_init: float, rope_partial_frac: float = 0.25, kv_source_attn: "CausalSelfAttention | None" = None):
+    def __init__(self, dim: int, num_heads: int, num_kv_heads: int, mlp_mult: float, rope_base: float, qk_gain_init: float, rope_partial_frac: float = 0.25, use_xsa: bool = False):
         super().__init__()
         self.attn_norm = RMSNorm()
         self.mlp_norm = RMSNorm()
-        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, rope_partial_frac, kv_source=kv_source_attn)
+        self.attn = CausalSelfAttention(dim, num_heads, num_kv_heads, rope_base, qk_gain_init, rope_partial_frac, use_xsa=use_xsa)
         self.mlp = MLP(dim, mlp_mult)
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
@@ -789,27 +798,19 @@ class GPT(nn.Module):
         self.logit_softcap = logit_softcap
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
         self.bigram = BigramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim) if bigram_vocab_size > 0 else None
-        self.trigram = TrigramHashEmbedding(trigram_vocab_size, trigram_dim, model_dim) if trigram_vocab_size > 0 else None
+        self.trigram = None  # removed: overhead not worth the BPB gain
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
         self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
         self.skip_weights = nn.Parameter(torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32))
         self.smear = SmearGate(model_dim)
-        # Build blocks sequentially so XSA blocks can reference source block's attn.
-        # xsa_num_layers=-1 → XSA-all: layers 1..N-1 all share K,V from layer 0 (one KV set).
-        # xsa_num_layers=N  → last N layers share K,V with layer[i-N] (spread pattern).
+        # XSA: value subtraction applied to all layers (compile-friendly, no KV sharing)
         xsa_all = xsa_num_layers < 0
-        if xsa_all:
-            xsa_start = 1  # layer 0 owns KV; all others share from it
-        else:
-            xsa_start = max(num_layers - xsa_num_layers, 0) if xsa_num_layers > 0 else num_layers
+        xsa_start = 0 if xsa_all else (max(num_layers - xsa_num_layers, 0) if xsa_num_layers > 0 else num_layers)
         _blocks: list[Block] = []
         for i in range(num_layers):
-            if i >= xsa_start:
-                source_attn = _blocks[0].attn if xsa_all else _blocks[i - xsa_num_layers].attn
-            else:
-                source_attn = None
-            _blocks.append(Block(model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init, rope_partial_frac, kv_source_attn=source_attn))
+            use_xsa = xsa_all or i >= xsa_start
+            _blocks.append(Block(model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init, rope_partial_frac, use_xsa=use_xsa))
         self.blocks = nn.ModuleList(_blocks)
         self.final_norm = RMSNorm()
         self.lm_head = None if tie_embeddings else CastedLinear(model_dim, vocab_size, bias=False)
@@ -1135,7 +1136,7 @@ def main() -> None:
     n_params = sum(p.numel() for p in base_model.parameters())
     log0(f"model_params:{n_params}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
-    xsa_mode = "xsa_all" if args.xsa_num_layers < 0 else f"xsa_{args.xsa_num_layers}"
+    xsa_mode = "xsa_value_sub_all" if args.xsa_num_layers < 0 else f"xsa_value_sub_{args.xsa_num_layers}"
     log0(f"attention_mode:gqa num_heads:{args.num_heads} num_kv_heads:{args.num_kv_heads} {xsa_mode}")
     log0(
         f"tie_embeddings:{args.tie_embeddings} embed_lr:{token_lr} "
