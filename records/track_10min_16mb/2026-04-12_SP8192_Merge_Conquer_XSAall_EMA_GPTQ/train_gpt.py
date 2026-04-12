@@ -75,7 +75,7 @@ class Hyperparameters:
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
-    mlp_mult = float(os.environ.get("MLP_MULT", 3.0))
+    mlp_mult = float(os.environ.get("MLP_MULT", 4.0))  # 4x matches top submissions; verified fits 16MB by clarkkev/aryanbhosale
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -114,7 +114,7 @@ class Hyperparameters:
     # High weight decay matches Kevin Clark's WD=0.085 which outperformed lower WD
     weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.095))
 
-    eval_stride = int(os.environ.get("EVAL_STRIDE", 32))
+    eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
     eval_batch_seqs = int(os.environ.get("EVAL_BATCH_SEQS", 32))
     eval_doc_aware = bool(int(os.environ.get("EVAL_DOC_AWARE", "1")))
 
@@ -127,7 +127,7 @@ class Hyperparameters:
 
     # Score-first causal TTT: fine-tune last 3 blocks on already-scored val tokens (legal)
     ttt_sf_enabled = bool(int(os.environ.get("TTT_SF_ENABLED", "1")))
-    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.0003"))
+    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.005"))
     ttt_sf_steps = int(os.environ.get("TTT_SF_STEPS", "3"))
 
     # MTP disabled to save budget for recurrence
