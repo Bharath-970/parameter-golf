@@ -400,8 +400,8 @@ CONTROL_TENSOR_NAME_PATTERNS = tuple(
     ).split(",") if p
 )
 FP16_KEEP_NAME_PATTERNS = tuple(
-    p for p in os.environ.get("FP16_KEEP_NAME_PATTERNS", "tok_emb").split(",") if p
-)
+    p for p in os.environ.get("FP16_KEEP_NAME_PATTERNS", "").split(",") if p
+)  # Embeddings now go through INT8 GPTQ (saves ~4MB vs FP16 for SP8192 8192x512 table)
 INT8_CLIP_Q = 99.99984 / 100.0
 INT8_PER_ROW_SCALE_DTYPE = torch.float16
 
