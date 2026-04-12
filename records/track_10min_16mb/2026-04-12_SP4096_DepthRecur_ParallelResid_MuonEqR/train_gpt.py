@@ -119,13 +119,13 @@ class Hyperparameters:
     ema_decay = float(os.environ.get("EMA_DECAY", "0.997"))
 
     # Self-generated GPTQ calibration
-    selfgen_calib_seqs = int(os.environ.get("SELFGEN_CALIB_SEQS", "4"))
-    selfgen_calib_len = int(os.environ.get("SELFGEN_CALIB_LEN", "128"))
+    selfgen_calib_seqs = int(os.environ.get("SELFGEN_CALIB_SEQS", "8"))
+    selfgen_calib_len = int(os.environ.get("SELFGEN_CALIB_LEN", "256"))
 
     # Score-first causal TTT: fine-tune last 3 blocks on already-scored val tokens (legal)
     ttt_sf_enabled = bool(int(os.environ.get("TTT_SF_ENABLED", "1")))
-    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.0001"))
-    ttt_sf_steps = int(os.environ.get("TTT_SF_STEPS", "1"))
+    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.0003"))
+    ttt_sf_steps = int(os.environ.get("TTT_SF_STEPS", "3"))
 
     # MTP disabled to save budget for recurrence
     mtp_enabled = bool(int(os.environ.get("MTP_ENABLED", "0")))
