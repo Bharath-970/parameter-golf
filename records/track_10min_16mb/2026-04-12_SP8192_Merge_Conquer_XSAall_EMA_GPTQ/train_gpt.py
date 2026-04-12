@@ -29,8 +29,12 @@ import zlib
 from pathlib import Path
 
 try:
-    import zstandard
-    _COMPRESSOR = "zstd"
+    try:
+        import brotli
+        _COMPRESSOR = "brotli"
+    except ImportError:
+        import zstandard
+        _COMPRESSOR = "zstd"
 except ImportError:
     _COMPRESSOR = "zlib"
 
@@ -86,8 +90,8 @@ class Hyperparameters:
 
     # Depth recurrence: repeat blocks recur_start..recur_end-1 (0-indexed) a second time
     # Default: blocks 4 and 5, matching dexhunter/Kevin Clark depth recurrence
-    recur_start = int(os.environ.get("RECUR_START", 4))
-    recur_end = int(os.environ.get("RECUR_END", 7))  # exclusive — blocks 4,5,6 (3 layers)
+    recur_start = int(os.environ.get("RECUR_START", 3))
+    recur_end = int(os.environ.get("RECUR_END", 6))  # exclusive — blocks 3,4,5 matching bigbag L3-5
     recur_enabled = bool(int(os.environ.get("RECUR_ENABLED", "1")))
 
     # Parallel residuals: attn and MLP run in parallel from same input, outputs are summed
@@ -108,14 +112,14 @@ class Hyperparameters:
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.3))
     # High weight decay matches Kevin Clark's WD=0.085 which outperformed lower WD
-    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.085))
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.095))
 
     eval_stride = int(os.environ.get("EVAL_STRIDE", 32))
     eval_batch_seqs = int(os.environ.get("EVAL_BATCH_SEQS", 32))
     eval_doc_aware = bool(int(os.environ.get("EVAL_DOC_AWARE", "1")))
 
     ema_enabled = bool(int(os.environ.get("EMA_ENABLED", "1")))
-    ema_decay = float(os.environ.get("EMA_DECAY", "0.997"))
+    ema_decay = float(os.environ.get("EMA_DECAY", "0.9965"))
 
     # Self-generated GPTQ calibration
     selfgen_calib_seqs = int(os.environ.get("SELFGEN_CALIB_SEQS", "8"))
@@ -1487,7 +1491,9 @@ def main() -> None:
     quant_buf = io.BytesIO()
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
-    if _COMPRESSOR == "zstd":
+    if _COMPRESSOR == "brotli":
+        quant_blob = brotli.compress(quant_raw, quality=11)
+    elif _COMPRESSOR == "zstd":
         quant_blob = zstandard.ZstdCompressor(level=22).compress(quant_raw)
     else:
         quant_blob = zlib.compress(quant_raw, 9)
@@ -1503,7 +1509,9 @@ def main() -> None:
         dist.barrier()
     with open("final_model.int8.ptz", "rb") as f:
         quant_blob_disk = f.read()
-    if _COMPRESSOR == "zstd":
+    if _COMPRESSOR == "brotli":
+        decompressed = brotli.decompress(quant_blob_disk)
+    elif _COMPRESSOR == "zstd":
         decompressed = zstandard.ZstdDecompressor().decompress(quant_blob_disk)
     else:
         decompressed = zlib.decompress(quant_blob_disk)
