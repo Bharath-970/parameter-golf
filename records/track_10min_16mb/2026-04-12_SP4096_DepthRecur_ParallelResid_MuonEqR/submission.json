@@ -12,7 +12,7 @@
     "Score-first causal TTT on last 3 blocks (legal)",
     "Higher weight decay 0.085 (Kevin Clark's high-WD config)",
     "EMA decay 0.997",
-    "MLP multiplier 4.0x (doubles hidden dim vs 3.0)",
+    "MLP multiplier 3.0x",
     "Partial RoPE (rope_dims=16 of 64)"
   ],
   "architecture": {
@@ -21,7 +21,7 @@
     "model_dim": 512,
     "num_heads": 8,
     "num_kv_heads": 4,
-    "mlp_mult": 4.0,
+    "mlp_mult": 3.0,
     "tie_embeddings": true,
     "qk_gain_init": 5.0,
     "rope_dims": 16,
