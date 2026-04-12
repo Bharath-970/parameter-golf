@@ -1,0 +1,40 @@
+{
+  "description": "SP4096 + Depth Recurrence (blocks 4-5) + Parallel Residuals + MuonEq-R + QK-Gain 5.0 + XSA-all + Self-Gen GPTQ + Score-First TTT",
+  "base": "2026-04-03_11L_XSAall_SelfGenGPTQ_ScoreFirstTTT",
+  "techniques": [
+    "SP4096 tokenizer (4096 vocab vs 1024 — more bytes per token → better BPB)",
+    "Depth recurrence: blocks 4-5 repeated a second time (free depth, zero extra params)",
+    "Parallel residuals: attention and MLP run in parallel from same input (PaLM-style)",
+    "MuonEq-R: row-norm equalization before Newton-Schulz5 orthogonalization",
+    "QK-Gain initialized to 5.0 (sharper attention, matches top submissions)",
+    "XSA-all: all blocks share K,V from block 0",
+    "Self-generated GPTQ calibration (activation-aware scale selection)",
+    "Score-first causal TTT on last 3 blocks (legal)",
+    "Higher weight decay 0.085 (Kevin Clark's high-WD config)",
+    "EMA decay 0.997",
+    "MLP multiplier 4.0x (doubles hidden dim vs 3.0)",
+    "Partial RoPE (rope_dims=16 of 64)"
+  ],
+  "architecture": {
+    "vocab_size": 4096,
+    "num_layers": 11,
+    "model_dim": 512,
+    "num_heads": 8,
+    "num_kv_heads": 4,
+    "mlp_mult": 4.0,
+    "tie_embeddings": true,
+    "qk_gain_init": 5.0,
+    "rope_dims": 16,
+    "xsa_all": true,
+    "recur_start": 4,
+    "recur_end": 6,
+    "parallel_residuals": true
+  },
+  "training": {
+    "iterations": 20000,
+    "max_wallclock_seconds": 600,
+    "train_batch_tokens": 786432,
+    "weight_decay": 0.085,
+    "ema_decay": 0.997
+  }
+}
