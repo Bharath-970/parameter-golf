@@ -85,8 +85,8 @@ class Hyperparameters:
     # QK-Gain: higher value → sharper attention; 5.25 matches SOTA neighborhood
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 5.25))
 
-    # XSA: all layers share K,V from block 0
-    xsa_all = bool(int(os.environ.get("XSA_ALL", "1")))
+    # XSA: disabled — top SP8192 submissions (bigbag, clarkkev) don't use it
+    xsa_all = bool(int(os.environ.get("XSA_ALL", "0")))
 
     # Depth recurrence: repeat blocks recur_start..recur_end-1 (0-indexed) a second time
     # Default: blocks 4 and 5, matching dexhunter/Kevin Clark depth recurrence
@@ -95,7 +95,9 @@ class Hyperparameters:
     recur_enabled = bool(int(os.environ.get("RECUR_ENABLED", "1")))
 
     # Parallel residuals: attn and MLP run in parallel from same input, outputs are summed
+    # Only applied to layers >= parallel_residuals_start (bigbag uses L7+ of 11)
     parallel_residuals = bool(int(os.environ.get("PARALLEL_RESIDUALS", "1")))
+    parallel_residuals_start = int(os.environ.get("PARALLEL_RESIDUALS_START", "7"))
 
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
@@ -829,6 +831,7 @@ class GPT(nn.Module):
         recur_end: int = 6,
         recur_enabled: bool = True,
         parallel_residuals: bool = True,
+        parallel_residuals_start: int = 7,
         mtp_enabled: bool = False,
     ):
         super().__init__()
@@ -846,13 +849,14 @@ class GPT(nn.Module):
         self.num_decoder_layers = num_layers - self.num_encoder_layers
         self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
         self.skip_weights = nn.Parameter(torch.ones(self.num_skip_weights, model_dim, dtype=torch.float32))
-        # XSA: all blocks share K,V from block 0
+        # XSA: optionally share K,V from block 0
         _blocks: list[Block] = []
         for i in range(num_layers):
             kv_src = _blocks[0].attn if (xsa_all and i > 0) else None
+            use_parallel = parallel_residuals and (i >= parallel_residuals_start)
             _blocks.append(Block(
                 model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init,
-                rope_dims=rope_dims, kv_source_attn=kv_src, parallel_residuals=parallel_residuals,
+                rope_dims=rope_dims, kv_source_attn=kv_src, parallel_residuals=use_parallel,
             ))
         self.blocks = nn.ModuleList(_blocks)
         self.final_norm = RMSNorm()
@@ -1239,6 +1243,7 @@ def main() -> None:
         recur_end=args.recur_end,
         recur_enabled=args.recur_enabled,
         parallel_residuals=args.parallel_residuals,
+        parallel_residuals_start=args.parallel_residuals_start,
         mtp_enabled=args.mtp_enabled,
     ).to(device).bfloat16()
     for module in base_model.modules():
