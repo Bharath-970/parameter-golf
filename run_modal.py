@@ -21,8 +21,8 @@ volume = modal.Volume.from_name("parameter-golf-data", create_if_missing=True)
 
 BRANCH = "sp4096-depth-recur-parallel-resid"
 SUBMISSION = "records/track_10min_16mb/2026-04-12_SP4096_DepthRecur_ParallelResid_MuonEqR/train_gpt.py"
-SEED = int(os.environ.get("SEED", "42"))
 N_GPUS = 8
+
 
 @app.function(
     image=image,
@@ -52,16 +52,17 @@ def check_data():
 
 @app.function(
     image=image,
-    gpu=modal.gpu.H100(count=N_GPUS),
+    cpu=4,
     timeout=3600,
     volumes={"/data": volume},
 )
-def train(seed: int = 42):
+def download_data():
+    """Download SP4096 data into the volume once. CPU-only, no GPU cost.
+    Points HF cache at /data so downloaded files persist across runs."""
     import subprocess
     import sys
     import os
 
-    # Clone repo on the submission branch
     subprocess.run([
         "git", "clone", "--branch", BRANCH,
         "https://github.com/Bharath-970/parameter-golf.git",
@@ -70,24 +71,94 @@ def train(seed: int = 42):
 
     os.chdir("/repo")
 
-    # Download SP4096 data only if not already cached in the volume
+    # Point HF cache to the volume so it persists
+    os.makedirs("/data/hf_cache", exist_ok=True)
+    env = {
+        **os.environ,
+        "HOME": "/root",
+        "HF_HOME": "/data/hf_cache",
+        "HUGGINGFACE_HUB_CACHE": "/data/hf_cache",
+    }
+
+    # SP4096 data is hosted on kevclark/parameter-golf, not the default repo.
+    # Must delete cached manifest.json first so the script fetches the right one.
+    for stale in ["data/manifest.json", "data/datasets/manifest.json"]:
+        if os.path.exists(stale):
+            os.remove(stale)
+
+    print("Downloading SP4096 data from kevclark/parameter-golf (takes ~5-10 min)...")
+    env["MATCHED_FINEWEB_REPO_ID"] = "kevclark/parameter-golf"
+    subprocess.run([
+        sys.executable, "data/cached_challenge_fineweb.py",
+        "--variant", "sp4096", "--train-shards", "5",
+    ], check=True, env=env)
+
+    # Copy downloaded files into volume for direct access
+    import shutil
+    src_datasets = "/repo/data/datasets/fineweb10B_sp4096"
+    src_tokenizer_dir = "/repo/data/tokenizers"
+    dst_datasets = "/data/datasets/fineweb10B_sp4096"
+    dst_tokenizers = "/data/tokenizers"
+
+    if os.path.exists(src_datasets):
+        print(f"Copying {len(os.listdir(src_datasets))} dataset files to volume...")
+        os.makedirs(dst_datasets, exist_ok=True)
+        for f in os.listdir(src_datasets):
+            shutil.copy2(os.path.join(src_datasets, f), os.path.join(dst_datasets, f))
+
+    if os.path.exists(src_tokenizer_dir):
+        os.makedirs(dst_tokenizers, exist_ok=True)
+        for f in os.listdir(src_tokenizer_dir):
+            shutil.copy2(os.path.join(src_tokenizer_dir, f), os.path.join(dst_tokenizers, f))
+        print(f"Copied tokenizers: {os.listdir(dst_tokenizers)}")
+
+    volume.commit()
+    print("Done — data committed to volume.")
+
+
+@app.function(
+    image=image,
+    gpu=f"H100:{N_GPUS}",
+    timeout=3600,
+    volumes={"/data": volume},
+)
+def train(seed: int = 42):
+    import subprocess
+    import sys
+    import os
+
+    subprocess.run([
+        "git", "clone", "--branch", BRANCH,
+        "https://github.com/Bharath-970/parameter-golf.git",
+        "/repo"
+    ], check=True)
+
+    os.chdir("/repo")
+
+    # Wire up cached data from volume
     sp4096_dir = "/data/datasets/fineweb10B_sp4096"
-    if not os.path.exists(sp4096_dir) or len(os.listdir(sp4096_dir)) < 3:
-        print("SP4096 data not cached — downloading...")
-        subprocess.run([
-            sys.executable, "data/cached_challenge_fineweb.py",
-            "--variant", "sp4096", "--train-shards", "5"
-        ], check=True, env={**os.environ, "HOME": "/root"})
-    else:
-        print(f"SP4096 data already cached ({len(os.listdir(sp4096_dir))} files), skipping download")
+    tok_src = "/data/tokenizers/fineweb_4096_bpe.model"
+
+    if os.path.exists(sp4096_dir) and len(os.listdir(sp4096_dir)) >= 3:
+        print(f"SP4096 data cached ({len(os.listdir(sp4096_dir))} files), symlinking...")
         os.makedirs("data/datasets", exist_ok=True)
         os.makedirs("data/tokenizers", exist_ok=True)
-        if not os.path.exists("data/datasets/fineweb10B_sp4096"):
-            os.symlink(sp4096_dir, "data/datasets/fineweb10B_sp4096")
-        tok_src = "/data/tokenizers/fineweb_4096_bpe.model"
-        tok_dst = "data/tokenizers/fineweb_4096_bpe.model"
-        if os.path.exists(tok_src) and not os.path.exists(tok_dst):
-            os.symlink(tok_src, tok_dst)
+        os.symlink(sp4096_dir, "data/datasets/fineweb10B_sp4096")
+        if os.path.exists(tok_src):
+            os.symlink(tok_src, "data/tokenizers/fineweb_4096_bpe.model")
+    else:
+        print("SP4096 data not in volume — downloading now (adds ~5-10 min)...")
+        for stale in ["data/manifest.json", "data/datasets/manifest.json"]:
+            if os.path.exists(stale):
+                os.remove(stale)
+        subprocess.run([
+            sys.executable, "data/cached_challenge_fineweb.py",
+            "--variant", "sp4096", "--train-shards", "5",
+        ], check=True, env={
+            **os.environ,
+            "HOME": "/root",
+            "MATCHED_FINEWEB_REPO_ID": "kevclark/parameter-golf",
+        })
 
     env = {
         **os.environ,
@@ -106,14 +177,23 @@ def train(seed: int = 42):
 
 
 @app.local_entrypoint()
-def main():
-    import sys
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "train"
-    if cmd == "check":
-        print("Checking cached data (CPU only, ~$0.02)...")
-        check_data.remote()
-    else:
-        seed = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 42
-        print(f"Launching seed={seed} on {N_GPUS}×H100, branch={BRANCH}")
-        returncode = train.remote(seed=seed)
-        print(f"Training finished with return code: {returncode}")
+def check():
+    """Check what data is cached in the volume (~$0.02)."""
+    print("Checking cached data...")
+    check_data.remote()
+
+
+@app.local_entrypoint()
+def download():
+    """Download SP4096 data into the volume. CPU-only, run once before training."""
+    print("Downloading SP4096 data into volume (CPU, no GPU cost)...")
+    download_data.remote()
+    print("Done. Run 'python3 -m modal run run_modal.py' to train.")
+
+
+@app.local_entrypoint()
+def main(seed: int = 42):
+    """Run training on 8xH100. Usage: python3 -m modal run run_modal.py --seed 42"""
+    print(f"Launching seed={seed} on {N_GPUS}xH100, branch={BRANCH}")
+    returncode = train.remote(seed=seed)
+    print(f"Training finished with return code: {returncode}")
