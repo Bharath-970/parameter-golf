@@ -1,0 +1,44 @@
+{
+  "description": "SP8192 + 3-layer recurrence + parallel residuals + legal score-first TTT + SwiGLU + warmdown-fraction + quarter batch",
+  "base": "2026-04-12_SP8192_Merge_Conquer_XSAall_EMA_GPTQ",
+  "techniques": [
+    "SP8192 tokenizer (Maximum tokens per byte for optimal BPB)",
+    "QK-Gain initialized to 5.25 (Matches SOTA neighborhood)",
+    "SwiGLU MLP (gated activation) with hidden scaled to preserve parameter budget",
+    "MuonEq-R Row-Equalized Optimizer",
+    "EMA (Exponential Moving Average) for quantization-aware checkpoints",
+    "Self-Generated GPTQ Calibration (Activation-aware scaling)",
+    "Score-first causal TTT on last 3 layers",
+    "Parallel Residuals (PaLM-style)",
+    "Depth Recurrence (Blocks 4-6 repeating once)",
+    "Partial RoPE (rope_dims=16)",
+    "Warmdown by wallclock fraction (WARMDOWN_FRAC=0.2)",
+    "Quarter batch tokens with optional gradient accumulation"
+  ],
+  "architecture": {
+    "vocab_size": 8192,
+    "num_layers": 11,
+    "model_dim": 512,
+    "num_heads": 8,
+    "num_kv_heads": 4,
+    "mlp_mult": 4.0,
+    "swiglu_enabled": true,
+    "swiglu_hidden_mult": 0.6667,
+    "tie_embeddings": true,
+    "qk_gain_init": 5.25,
+    "rope_dims": 16,
+    "xsa_all": false,
+    "recur_start": 3,
+    "recur_end": 6,
+    "parallel_residuals": true
+  },
+  "training": {
+    "iterations": 20000,
+    "max_wallclock_seconds": 600,
+    "train_batch_tokens": 196608,
+    "grad_accum_steps": 2,
+    "warmdown_frac": 0.2,
+    "weight_decay": 0.095,
+    "ema_decay": 0.9965
+  }
+}
