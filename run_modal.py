@@ -28,7 +28,7 @@ DATA_REPO_ID = os.environ.get("MATCHED_FINEWEB_REPO_ID", "kevclark/parameter-gol
 TRAIN_SHARDS = int(os.environ.get("TRAIN_SHARDS", "5"))
 SUBMISSION = os.environ.get(
     "SUBMISSION",
-    "records/track_10min_16mb/2026-04-12_SP8192_Merge_Conquer_XSAall_EMA_GPTQ/train_gpt.py",
+    "records/track_10min_16mb/2026-04-28_SP8192_SwiGLU_WarmdownFix_QBatch/train_gpt.py",
 )
 N_GPUS = 8
 

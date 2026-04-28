@@ -1513,7 +1513,7 @@ def main() -> None:
         log0(f"Serialized model: {model_bytes} bytes")
         log0(f"Code size: {code_bytes} bytes")
 
-    # Final eval: legal score-first TTT (no GPTQ)
+    # Final eval: score-first TTT (legal) when enabled; otherwise doc-aware sliding eval.
     torch.cuda.synchronize()
     t_eval = time.perf_counter()
     if args.ttt_sf_enabled:
@@ -1527,9 +1527,11 @@ def main() -> None:
             ttt_steps=args.ttt_sf_steps,
         )
     else:
-        final_val_loss, final_val_bpb = eval_val(
-            args, base_model, rank, world_size, device, grad_accum_steps,
+        final_val_loss, final_val_bpb = eval_val_sliding_docs(
+            args, base_model, rank, world_size, device,
             val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
+            stride=args.eval_stride,
+            batch_seqs=args.eval_batch_seqs,
         )
     torch.cuda.synchronize()
     log0(
