@@ -1513,16 +1513,27 @@ def main() -> None:
         log0(f"Serialized model: {model_bytes} bytes")
         log0(f"Code size: {code_bytes} bytes")
 
-    # Final eval: raw model (no GPTQ/TTT)
+    # Final eval: legal score-first TTT (no GPTQ)
     torch.cuda.synchronize()
     t_eval = time.perf_counter()
-    final_val_loss, final_val_bpb = eval_val(
-        args, base_model, rank, world_size, device, grad_accum_steps,
-        val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
-    )
+    if args.ttt_sf_enabled:
+        log0(f"ttt_sf: score-first TTT lr={args.ttt_sf_lr} steps={args.ttt_sf_steps}")
+        final_val_loss, final_val_bpb = eval_val_sliding_docs_ttt(
+            args, base_model, rank, world_size, device,
+            val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
+            stride=args.eval_stride,
+            batch_seqs=args.eval_batch_seqs,
+            ttt_lr=args.ttt_sf_lr,
+            ttt_steps=args.ttt_sf_steps,
+        )
+    else:
+        final_val_loss, final_val_bpb = eval_val(
+            args, base_model, rank, world_size, device, grad_accum_steps,
+            val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut,
+        )
     torch.cuda.synchronize()
     log0(
-        f"final_eval val_loss:{final_val_loss:.8f} val_bpb:{final_val_bpb:.8f} "
+        f"final_sliding val_loss:{final_val_loss:.8f} val_bpb:{final_val_bpb:.8f} "
         f"eval_time:{1000.0 * (time.perf_counter() - t_eval):.0f}ms"
     )
     log0(f"FINAL val_bpb:{final_val_bpb:.8f}")
