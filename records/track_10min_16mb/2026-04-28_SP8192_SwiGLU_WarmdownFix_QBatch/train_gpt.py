@@ -128,6 +128,7 @@ class Hyperparameters:
     eval_stride = int(os.environ.get("EVAL_STRIDE", 32))
     eval_batch_seqs = int(os.environ.get("EVAL_BATCH_SEQS", 32))
     eval_doc_aware = bool(int(os.environ.get("EVAL_DOC_AWARE", "1")))
+    eval_progress_every = int(os.environ.get("EVAL_PROGRESS_EVERY", "200"))
 
     ema_enabled = bool(int(os.environ.get("EMA_ENABLED", "1")))
     ema_decay = float(os.environ.get("EMA_DECAY", "0.9965"))
@@ -1033,7 +1034,7 @@ def eval_val_sliding_docs(
                 if len(pending) >= batch_seqs:
                     flush_pending()
             docs_done += 1
-            if rank == 0 and docs_done % 1000 == 0:
+            if rank == 0 and docs_done % max(1, args.eval_progress_every) == 0:
                 flush_pending()
                 pct = docs_done / max(len(rank_docs), 1) * 100
                 rb = 0.0
