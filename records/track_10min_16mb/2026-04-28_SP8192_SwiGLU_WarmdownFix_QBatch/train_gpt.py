@@ -71,7 +71,8 @@ class Hyperparameters:
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 5000))
     warmdown_frac = float(os.environ.get("WARMDOWN_FRAC", "0.2"))
     warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 196_608))
+    # Default back to proven high-throughput setting from the stronger Apr-12 SP8192 stack.
+    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 786_432))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 2048))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
 
@@ -81,7 +82,8 @@ class Hyperparameters:
     model_dim = int(os.environ.get("MODEL_DIM", 512))
     num_heads = int(os.environ.get("NUM_HEADS", 8))
     mlp_mult = float(os.environ.get("MLP_MULT", 4.0))  # 4x matches top submissions; fits budget with SwiGLU scaling
-    swiglu_enabled = bool(int(os.environ.get("SWIGLU_ENABLED", "1")))
+    # Keep SwiGLU available, but don't enable by default until it proves better than baseline.
+    swiglu_enabled = bool(int(os.environ.get("SWIGLU_ENABLED", "0")))
     swiglu_hidden_mult = float(os.environ.get("SWIGLU_HIDDEN_MULT", "0.6667"))
     tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
@@ -121,9 +123,9 @@ class Hyperparameters:
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
     grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.3))
     # High weight decay matches Kevin Clark's WD=0.085 which outperformed lower WD
-    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.095))
+    weight_decay = float(os.environ.get("WEIGHT_DECAY", 0.085))
 
-    eval_stride = int(os.environ.get("EVAL_STRIDE", 64))
+    eval_stride = int(os.environ.get("EVAL_STRIDE", 32))
     eval_batch_seqs = int(os.environ.get("EVAL_BATCH_SEQS", 32))
     eval_doc_aware = bool(int(os.environ.get("EVAL_DOC_AWARE", "1")))
 
@@ -136,8 +138,9 @@ class Hyperparameters:
 
     # Score-first causal TTT: fine-tune last 3 blocks on already-scored val tokens (legal)
     ttt_sf_enabled = bool(int(os.environ.get("TTT_SF_ENABLED", "1")))
-    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.005"))
+    ttt_sf_lr = float(os.environ.get("TTT_SF_LR", "0.0003"))
     ttt_sf_steps = int(os.environ.get("TTT_SF_STEPS", "3"))
+    ttt_sf_progress_every = int(os.environ.get("TTT_SF_PROGRESS_EVERY", "100"))
 
     # MTP disabled to save budget for recurrence
     mtp_enabled = bool(int(os.environ.get("MTP_ENABLED", "0")))
@@ -1144,7 +1147,7 @@ def eval_val_sliding_docs_ttt(
                     torch.nn.utils.clip_grad_norm_(ttt_params, 1.0)
                     ttt_opt.step()
 
-        if rank == 0 and (di + 1) % 500 == 0:
+        if rank == 0 and (di + 1) % max(1, args.ttt_sf_progress_every) == 0:
             pct = (di + 1) / max(len(rank_docs), 1) * 100
             rb = 0.0
             if token_count.item() > 0 and byte_count.item() > 0:

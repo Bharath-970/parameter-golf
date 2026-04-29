@@ -1,54 +1,50 @@
-# SP8192 + SwiGLU + Warmdown Fraction + Quarter Batch
+# SP8192 + Warmdown Fraction + Optional SwiGLU (Runpod Iteration Profile)
 
-This run starts from the SP8192 Merge-and-Conquer stack and applies three proven improvements:
+This run starts from the SP8192 Merge-and-Conquer stack and keeps the defaults aligned
+with the stronger Apr-12 profile for faster, safer iteration:
 
-- **SwiGLU MLP** with hidden scaled to preserve parameter budget
-- **Warmdown by wallclock fraction** (`WARMDOWN_FRAC=0.2`) to avoid early LR decay
-- **Quarter batch tokens** with **optional grad accumulation** to increase optimizer steps
+- **Proven batch size** default (`TRAIN_BATCH_TOKENS=786432`)
+- **Conservative legal TTT LR** default (`TTT_SF_LR=0.0003`)
+- **More frequent TTT progress logs** (`TTT_SF_PROGRESS_EVERY=100`)
+- **Optional SwiGLU path** for A/B tests (`SWIGLU_ENABLED=1`)
 
 Goal: beat the 1.0810 SOTA with a multi-seed average of **1.0760 or lower**.
 
-## Key Additions
+## Key Defaults
 
-- SwiGLU gated activation replaces LeakyReLU^2 in the MLP
-- Warmdown based on wallclock fraction (fixes step-1 decay under 10-minute cap)
-- Smaller batch tokens + accumulation to trade throughput for more steps
+- `TRAIN_BATCH_TOKENS=786432` (instead of quarter-batch)
+- `TTT_SF_LR=0.0003`
+- `EVAL_STRIDE=32`
+- `SWIGLU_ENABLED=0` by default (opt-in)
 
-## Training Launch (8xH100)
+## Run #1 (Fast Complete Score, No TTT)
 
 ```bash
-RUN_ID=sp8192_swiglu_warmdown_qbatch_seed42 \
+RUN_ID=sp8192_seed42_nottt \
 SEED=42 \
 DATA_PATH=./data/datasets/fineweb10B_sp8192 \
 TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model \
 VOCAB_SIZE=8192 \
-TRAIN_BATCH_TOKENS=196608 \
-GRAD_ACCUM_STEPS=2 \
-SWIGLU_ENABLED=1 \
-SWIGLU_HIDDEN_MULT=0.6667 \
-WARMDOWN_FRAC=0.2 \
+TTT_SF_ENABLED=0 \
 torchrun --standalone --nproc_per_node=8 train_gpt.py
 ```
 
-## 3-Seed Sweep
+## Run #2 (Legal TTT Enabled, Better Final Score)
 
 ```bash
-for s in 42 1337 2024; do
-	RUN_ID=sp8192_swiglu_warmdown_qbatch_seed${s} \
-	SEED=$s \
-	DATA_PATH=./data/datasets/fineweb10B_sp8192 \
-	TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model \
-	VOCAB_SIZE=8192 \
-	TRAIN_BATCH_TOKENS=196608 \
-	GRAD_ACCUM_STEPS=2 \
-	SWIGLU_ENABLED=1 \
-	SWIGLU_HIDDEN_MULT=0.6667 \
-	WARMDOWN_FRAC=0.2 \
-	torchrun --standalone --nproc_per_node=8 train_gpt.py
-done
+RUN_ID=sp8192_seed42_ttt \
+SEED=42 \
+DATA_PATH=./data/datasets/fineweb10B_sp8192 \
+TOKENIZER_PATH=./data/tokenizers/fineweb_8192_bpe.model \
+VOCAB_SIZE=8192 \
+TTT_SF_ENABLED=1 \
+TTT_SF_LR=0.0003 \
+TTT_SF_STEPS=3 \
+TTT_SF_PROGRESS_EVERY=100 \
+torchrun --standalone --nproc_per_node=8 train_gpt.py
 ```
 
 ## Notes
 
-- Set `WARMDOWN_FRAC=0` to fall back to `WARMDOWN_ITERS`.
-- Adjust `TRAIN_BATCH_TOKENS` and `GRAD_ACCUM_STEPS` together to control stability and step count.
+- Use `SWIGLU_ENABLED=1` only for A/B tests after a stable no-SwiGLU baseline.
+- If post-train TTT appears idle, check logs for `ttt_sf [...]` progress lines every 100 docs.
